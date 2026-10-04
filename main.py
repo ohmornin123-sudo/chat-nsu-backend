@@ -2,6 +2,8 @@ import os
 import json
 import asyncio
 import urllib.parse
+import urllib.request
+from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -358,7 +360,72 @@ async def chat_stream(request: Request):
         })
         yield f"event: final\ndata: {final_payload}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+# -----------------------------------------------------------------------------
+# 11. 성암기념중앙도서관(9호관) 실시간 열람실 좌석 API (GET /library/seats)
+# -----------------------------------------------------------------------------
+@app.get("/library/seats")
+def get_library_seats():
+    # 1. 교내 220.68.191.20 실시간 SeatMate 시스템 직접 쿼리 시도
+    try:
+        req = urllib.request.Request("http://220.68.191.20/setting", headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=3) as res:
+            raw_data = json.loads(res.read().decode("utf-8"))
+            raw_rooms = raw_data.get("data", {}).get("data", [])
+            if raw_rooms:
+                clean_rooms = []
+                for r in raw_rooms:
+                    clean_rooms.append({
+                        "code": r.get("code"),
+                        "name": r.get("name"),
+                        "floor": r.get("floor"),
+                        "total": r.get("cnt"),
+                        "available": r.get("available"),
+                        "in_use": r.get("inUse"),
+                        "disabled": r.get("disabled"),
+                        "start_time": f"{r.get('wkStartTm', '0700')[:2]}:{r.get('wkStartTm', '0700')[2:]}",
+                        "end_time": f"{r.get('wkEndTm', '2300')[:2]}:{r.get('wkEndTm', '2300')[2:]}",
+                        "day_off": r.get("dayOff", False)
+                    })
+                payload = {
+                    "system": "SeatMate",
+                    "library": "성암기념중앙도서관 (9호관)",
+                    "server_ip": "220.68.191.20",
+                    "total_seats": sum(r["total"] for r in clean_rooms),
+                    "available_seats": sum(r["available"] for r in clean_rooms),
+                    "in_use_seats": sum(r["in_use"] for r in clean_rooms),
+                    "rooms": clean_rooms,
+                    "updated_at": datetime.now().isoformat(),
+                    "source": "live_realtime"
+                }
+                if db is not None:
+                    db["library_seats"].delete_many({})
+                    db["library_seats"].insert_one(payload.copy())
+                return payload
+    except Exception as e:
+        print(f"Direct seat query error, falling back to MongoDB: {e}")
+
+    # 2. 교내망 방화벽/외부 차단 시 MongoDB Atlas 최신 동기화 캐시 반환
+    if db is not None:
+        doc = db["library_seats"].find_one()
+        if doc:
+            doc["_id"] = str(doc["_id"])
+            doc["source"] = "db_cache"
+            return doc
+
+    # 3. 최후 기본값
+    return {
+        "system": "SeatMate",
+        "library": "성암기념중앙도서관 (9호관)",
+        "total_seats": 946,
+        "available_seats": 940,
+        "in_use_seats": 2,
+        "rooms": [
+            {"code": 1, "name": "제1 자유열람실", "floor": "2층", "total": 357, "available": 354, "in_use": 0, "start_time": "07:00", "end_time": "23:00"},
+            {"code": 2, "name": "제2 자유열람실", "floor": "2층", "total": 265, "available": 262, "in_use": 2, "start_time": "07:00", "end_time": "23:00"},
+            {"code": 3, "name": "제3 자유열람실", "floor": "1층", "total": 324, "available": 324, "in_use": 0, "start_time": "07:00", "end_time": "23:00"}
+        ],
+        "source": "fallback"
+    }
 
 if __name__ == "__main__":
     import uvicorn
