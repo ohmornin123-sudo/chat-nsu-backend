@@ -95,13 +95,75 @@ def get_buses():
     return []
 
 # -----------------------------------------------------------------------------
-# 6. 캠퍼스 건물 및 5자리 강의실 정보 API (GET /buildings)
+# 6. 캠퍼스 건물 및 5자리 강의실 정보 API (GET /buildings, GET /classrooms/search)
 # -----------------------------------------------------------------------------
 @app.get("/buildings")
 def get_buildings():
     if db is not None:
         return serialize_docs(db["buildings"].find())
     return []
+
+@app.get("/classrooms/search")
+def search_classroom(code: str):
+    """5자리 강의실 번호 스마트 파싱 및 매핑 검색 (예: 16419 -> 16호관 4층 19호)"""
+    code_clean = code.strip().replace("호", "").replace("관", "")
+    bldg_id = None
+    floor = None
+    room = None
+    
+    if len(code_clean) == 5 and code_clean.isdigit():
+        bldg_id = code_clean[:2]
+        floor = code_clean[2]
+        room = code_clean[3:]
+    elif len(code_clean) == 4 and code_clean.isdigit():
+        bldg_id = code_clean[:1].zfill(2)
+        floor = code_clean[1]
+        room = code_clean[2:]
+        
+    building_doc = None
+    if db is not None:
+        if bldg_id:
+            building_doc = db["buildings"].find_one({"id": bldg_id})
+        else:
+            # 텍스트 검색 (건물명 또는 별칭)
+            building_doc = db["buildings"].find_one({
+                "$or": [
+                    {"name": {"$regex": code, "$options": "i"}},
+                    {"aliases": {"$in": [code]}}
+                ]
+            })
+            
+    if building_doc:
+        building_doc["_id"] = str(building_doc["_id"])
+        return {
+            "query": code,
+            "matched": True,
+            "building_id": building_doc.get("id"),
+            "building_name": building_doc.get("name"),
+            "floor": f"{floor}층" if floor else "전체",
+            "room": f"{room}호" if room else None,
+            "full_location": f"{building_doc.get('name')} {floor}층 {room}호 강의실" if floor and room else building_doc.get('name'),
+            "map_coords": building_doc.get("map_coords"),
+            "navigation": building_doc.get("navigation"),
+            "building": building_doc
+        }
+    return {
+        "query": code,
+        "matched": False,
+        "message": f"'{code}'에 해당하는 건물 또는 강의실을 찾을 수 없습니다."
+    }
+
+# -----------------------------------------------------------------------------
+# 6-1. 프로젝트 포트폴리오 명세 API (GET /portfolio)
+# -----------------------------------------------------------------------------
+@app.get("/portfolio")
+def get_portfolio():
+    if db is not None:
+        doc = db["portfolio_project"].find_one()
+        if doc:
+            doc["_id"] = str(doc["_id"])
+            return doc
+    return {"message": "Portfolio data not initialized"}
 
 # -----------------------------------------------------------------------------
 # 7. 지능정보통신공학과 교육과정 API (GET /curriculum)
