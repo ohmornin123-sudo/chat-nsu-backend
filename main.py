@@ -81,10 +81,26 @@ def get_cafeteria():
 @app.get("/cafeteria/today")
 def get_cafeteria_today():
     if db is not None:
+        doc = db["cafeteria_weekly"].find_one()
+        if doc and "days" in doc:
+            # 기본적으로 월요일(10.05) 반환
+            return {
+                "date": "2026-10-05(월)",
+                "day_data": doc["days"].get("월", {})
+            }
         return {
             "date": "2026-10-05",
             "cafeterias": serialize_docs(db["cafeteria"].find())
         }
+    return {}
+
+@app.get("/cafeteria/weekly")
+def get_cafeteria_weekly():
+    if db is not None:
+        doc = db["cafeteria_weekly"].find_one()
+        if doc:
+            doc["_id"] = str(doc["_id"])
+            return doc
     return {}
 
 # -----------------------------------------------------------------------------
