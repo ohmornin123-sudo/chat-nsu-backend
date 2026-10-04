@@ -166,13 +166,69 @@ def get_portfolio():
     return {"message": "Portfolio data not initialized"}
 
 # -----------------------------------------------------------------------------
-# 7. 지능정보통신공학과 교육과정 API (GET /curriculum)
+# 7. 단과대학 및 학과 정보 API (GET /departments, GET /departments/{name})
+# -----------------------------------------------------------------------------
+@app.get("/departments")
+def get_departments(college: str = None):
+    """남서울대 23개 전체 단과대학 및 학과 정보 목록 (위치, 전화번호, 연구실)"""
+    if db is not None:
+        query = {}
+        if college:
+            query["college"] = {"$regex": college, "$options": "i"}
+        return serialize_docs(db["departments"].find(query))
+    return []
+
+@app.get("/departments/{dept_name}")
+def get_department_detail(dept_name: str):
+    """특정 학과 상세 정보 조회"""
+    if db is not None:
+        doc = db["departments"].find_one({
+            "$or": [
+                {"name": {"$regex": dept_name, "$options": "i"}},
+                {"dept_code": {"$regex": dept_name, "$options": "i"}}
+            ]
+        })
+        if doc:
+            doc["_id"] = str(doc["_id"])
+            return doc
+    return {"message": "Department not found"}
+
+# -----------------------------------------------------------------------------
+# 7-1. 전 학과 정규 교육과정 (커리큘럼) API (GET /curriculum)
 # -----------------------------------------------------------------------------
 @app.get("/curriculum")
-def get_curriculum(grade: int = 0):
+def get_curriculum(dept: str = None, grade: int = 0):
+    """남서울대 전 학과(컴소, 지능정보, 간호, 물치, 경영, 시디 등) 교육과정 조회"""
     if db is not None:
-        query = {} if grade == 0 else {"grade": grade}
+        query = {}
+        if dept:
+            query["dept"] = {"$regex": dept, "$options": "i"}
+        if grade > 0:
+            query["grade"] = grade
         return serialize_docs(db["curriculum"].find(query))
+    return []
+
+# -----------------------------------------------------------------------------
+# 7-2. 남서울대 교내·외 장학금 정보 API (GET /scholarships)
+# -----------------------------------------------------------------------------
+@app.get("/scholarships")
+def get_scholarships(category: str = None):
+    """남서울대 15종 장학금(성적, 마일리지, 복지, 가족, 국가장학금) 조회"""
+    if db is not None:
+        query = {}
+        if category:
+            query["category"] = {"$regex": category, "$options": "i"}
+        return serialize_docs(db["scholarships"].find(query))
+    return []
+
+# -----------------------------------------------------------------------------
+# 7-3. 주요 행정부서 및 긴급 연락처 API (GET /offices)
+# -----------------------------------------------------------------------------
+@app.get("/offices")
+def get_admin_offices():
+    """교무처, 장학팀, 총무처, 보건소, 예비군 등 주요 행정부서 안내"""
+    if db is not None:
+        return serialize_docs(db["admin_offices"].find())
     return []
 
 # -----------------------------------------------------------------------------
@@ -246,9 +302,38 @@ async def chat_stream(request: Request):
     elif "식당" in question or "학식" in question or "메뉴" in question:
         answer = "오늘 남서울대 학생식당(학생복지회관 8호관) 메뉴:\n• 1층 푸드코트: 수제등심돈까스(5,500원), 제육덮밥(5,000원)\n• 2층 식당: 차돌된장찌개, 순두부백반\n• 카페테리아 멀베리(엘림2관): 천원의 아침밥(08:20~09:30), 뚝배기불고기\n(※ MongoDB Atlas 실시간 식단표 연동 완료)"
         sources = [{"doc_name": "학생복지처", "article": "주간식단표(학생복지회관)", "page": 1}]
+    elif "모범" in question or ("성적" in question and "장학" in question):
+        answer = "남서울대학교 모범장학금(성적우수)은 직전학기 15학점 이상(4학년 12학점) 이수, 평점 3.0 이상인 자 중 학업성적(90%)과 모범점수(10%)를 합산해 상위 학생에게 수업료 전액/반액/일부 감면을 지급합니다. (별도 신청 없이 학과 성적순 자동 선발)"
+        sources = [{"doc_name": "장학규정", "article": "제12조(모범장학금 선발기준)", "page": 3}]
+    elif "마일리지" in question:
+        answer = "N+ 마일리지 장학금은 교내 비교과 프로그램(취업특강, 자격증, 봉사활동 등) 참여 시 마일리지를 적립하여 학기당 최대 100만원까지 현금 환산 지급하는 장학금입니다. 학생경력개발시스템(N-Plus)에서 신청 가능합니다."
+        sources = [{"doc_name": "교육혁신처", "article": "N+ 마일리지 장학 운영지침", "page": 1}]
+    elif "가족장학" in question or "패밀리" in question:
+        answer = "가족장학금은 직계가족 2인 이상이 당해 학기 남서울대에 동시 재학 중일 때 1인에게 수업료 30%~50%를 감면해 주는 혜택입니다. 가족관계증명서를 장학팀(041-580-2040)에 제출하시면 됩니다."
+        sources = [{"doc_name": "장학규정", "article": "제18조(가족장학금 지급 규정)", "page": 5}]
     elif "장학금" in question or "장학" in question:
-        answer = "장학금은 직전 학기 15학점(4학년 12학점) 이상을 이수하고 평점평균 2.5 이상인 자 중 품행이 단정하고 성적 또는 가계 곤란도 기준을 충족한 학생에게 지급됩니다."
+        answer = "남서울대학교 장학금 안내:\n• 모범장학금(성적): 평점 3.0 이상 상위자 (자동선발)\n• N+ 마일리지 장학금: 비교과 활동 적립금 (학기당 최대 100만원)\n• 희망장학금: 소득분위 기준 감면\n• 가족장학금: 직계가족 동시 재학 시 30~50% 감면\n• 국가장학금 1·2유형 및 국가근로\n(자세한 문의: 학생처 장학복지팀 041-580-2040)"
         sources = [{"doc_name": "장학규정", "article": "제76조(장학금 지급 요건)", "page": 16}]
+    elif "과사" in question or "학과사무실" in question or "전화번호" in question:
+        # DB departments 검색 시도
+        matched_dept = None
+        if db is not None:
+            for d in db["departments"].find():
+                if d["name"] in question or d["dept_code"].lower() in question.lower() or d["name"][:2] in question:
+                    matched_dept = d
+                    break
+        if matched_dept:
+            answer = f"남서울대학교 {matched_dept['name']} 사무실 안내:\n• 위치: {matched_dept['location']} ({matched_dept['building_name']})\n• 직통 전화번호: {matched_dept['office_tel']}\n• 학위: {matched_dept['degree']} (최소이수학점: {matched_dept['min_credits']}학점)\n• 대표 실습실: {', '.join(matched_dept['labs'])}"
+            sources = [{"doc_name": "대학요람", "article": f"{matched_dept['name']} 학과소개", "page": 1}]
+        else:
+            answer = "남서울대 주요 학과사무실 전화번호 안내:\n• 컴퓨터소프트웨어학과: 041-580-2100 (공학2관 3층)\n• 지능정보통신공학과: 041-580-2120 (공학1관 3층)\n• 간호학과: 041-580-2710 (보건의료학관 4층)\n• 물리치료학과: 041-580-2530 (보건의료학관 3층)\n• 대표 안내: 041-580-2000"
+            sources = [{"doc_name": "교내전화번호부", "article": "단과대학 학과사무실 직통안내", "page": 1}]
+    elif "교무처" in question:
+        answer = "남서울대 교무처(학사지원팀)는 21세기개발관(12호관) 1층 종합행정실에 위치하고 있습니다. 수강신청, 휴복학, 졸업요건 문의는 041-580-2030 으로 연락하시면 됩니다."
+        sources = [{"doc_name": "행정부서안내", "article": "교무처 학사지원팀", "page": 1}]
+    elif "장학팀" in question or "장학처" in question:
+        answer = "남서울대 학생처 장학복지팀은 학생복지회관(8호관) 2층에 위치해 있습니다. 국가장학금 및 교내장학금 상담 직통번호는 041-580-2040 입니다."
+        sources = [{"doc_name": "행정부서안내", "article": "학생처 장학복지팀", "page": 1}]
     elif "정정" in question:
         answer = "수강신청 정정 기간은 매 학기 개강 첫 주(월~금)에 진행됩니다. 정정 기간 내 포털 학사정보시스템을 통해 추가 수강신청 및 과목 변경이 가능합니다."
         sources = [{"doc_name": "학사규정", "article": "제24조(수강신청 정정)", "page": 6}]
