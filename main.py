@@ -393,8 +393,46 @@ def get_fallback_answer(question: str) -> str:
     return "학칙 제38조에 따르면 졸업에 필요한 최저 이수학점은 130학점(전공필수 18, 전공선택 54, 교양 36 이상)입니다."
 
 # -----------------------------------------------------------------------------
-# 10. 챗봇 SSE 실시간 스트리밍 질의응답 (POST /chat/stream)
+# 10. 단발성 챗봇 질의응답 (POST /chat) 및 실시간 SSE 스트리밍 (POST /chat/stream)
 # -----------------------------------------------------------------------------
+@app.post("/chat")
+async def chat_basic(request: Request):
+    """일반 단발성 질의응답 엔드포인트 (외부 API 테스트 및 호환용)"""
+    body = await request.json()
+    question = (body.get("message") or body.get("question") or "").strip()
+    if not question:
+        return {"reply": "질문을 입력해 주세요.", "answer": "질문을 입력해 주세요."}
+
+    answer = ""
+    if GEMINI_API_KEY:
+        gemini_models = ["gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-flash-latest"]
+        payload = {
+            "system_instruction": {"parts": [{"text": NSU_SYSTEM_PROMPT}]},
+            "contents": [{"role": "user", "parts": [{"text": question}]}],
+            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1024}
+        }
+        for model_name in gemini_models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    res = await client.post(url, json=payload)
+                    if res.status_code == 200:
+                        r_data = res.json()
+                        answer = r_data["candidates"][0]["content"]["parts"][0]["text"]
+                        break
+            except Exception as e:
+                print(f"Chat basic model {model_name} error: {e}")
+                continue
+
+    if not answer:
+        answer = get_fallback_answer(question)
+
+    return {
+        "reply": answer,
+        "answer": answer,
+        "type": "Gemini AI"
+    }
+
 @app.post("/chat/stream")
 async def chat_stream(request: Request):
     body = await request.json()
